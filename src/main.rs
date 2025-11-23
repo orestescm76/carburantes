@@ -1,11 +1,9 @@
 use reqwest;
 use json::{self, JsonValue};
 use std::cmp::Ordering;
-use std::io;
 use std::option::Option;
 use std::collections::HashMap;
 use std::fs::{self, exists};
-use std::env;
 use clap::{Parser,ValueEnum};
 
 #[derive(Parser)]
@@ -13,7 +11,9 @@ struct Cli{
 	#[arg(short, long)]
 	city: String,
 	#[arg(value_enum, short, long)]
-	fuel_type: FuelType
+	fuel_type: FuelType,
+	#[arg(short, long)]
+	money: Option<f32>
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -48,10 +48,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 	// //json
 	let mut url_precios = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/FiltroMunicipio/".to_string();
 	let query = args.city.to_lowercase().trim().to_string();
-	let mun = municipios.get(&query).unwrap();
+	let mun = municipios.get(&query).expect("city not found, exiting");
 	url_precios.push_str(&mun.id.to_string().as_str());
 	//precios
-	println!("Precios de carburantes en {}",mun.municipio);
 	let mut result = reqwest::blocking::get(url_precios)?.text()?;
 	//sacamos el objeto json
 	result = result.replace("Precio Gasolina 95 E5", "Precio95");
@@ -63,16 +62,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 	for gasolinera in gasolineras.members() {
 		resultados.push(get_gasolinera(&gasolinera));
 	}
-
 	sort_gas(&mut resultados, args.fuel_type);
-	for gas in resultados {
-		match args.fuel_type {
-			FuelType::Gas => println!("{}, {} €", gas.nombre, gas.precio_gasolina),
-			FuelType::Diesel => println!("{}, {} €", gas.nombre, gas.precio_gasoil),
+	print_prices(mun, &resultados,args.fuel_type ,args.money );
+	Ok(())
+}
+fn print_prices(mun: &Municipio, gas_stations :&Vec<Gasolinera>, f_type: FuelType, money: Option<f32>) {
+	//print
+	println!("Precios de carburantes en {}",mun.municipio);
+	for gas in gas_stations {
+		let price: f32 = match f_type {
+			FuelType::Gas => gas.precio_gasolina,
+			FuelType::Diesel => gas.precio_gasoil,
+		};
+		match money {
+			Some(m) => println!("{}, {} €/l; {} l", gas.nombre, price, m/price),
+			None =>  println!("{}, {} €/l", gas.nombre, price),
 		}
 	}
-	Ok(())
-	
 }
 fn sort_gas(gas_stations :&mut Vec<Gasolinera>, f_type: FuelType) {
 	match f_type {
