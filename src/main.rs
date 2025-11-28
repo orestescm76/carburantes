@@ -6,20 +6,24 @@ use std::collections::HashMap;
 use std::fs::{self, exists};
 use clap::{Parser,ValueEnum};
 
+//args are in spanish and english it's a fucking mess
 #[derive(Parser)]
 struct Cli{
-	#[arg(short, long)]
+	#[arg(short, long, alias="ciudad")]
 	city: String,
-	#[arg(value_enum, short, long)]
+	#[arg(value_enum, short, long, alias="combustible")]
 	fuel_type: FuelType,
-	#[arg(short, long)]
+	#[arg(short, long, alias="dinero")]
 	money: Option<f32>
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum FuelType {
 	Gas,
-	Diesel
+	Gas98,
+	Diesel,
+	DieselPre,
+
 }
 
 fn save_initial_file(url: &str) {
@@ -30,7 +34,7 @@ fn save_initial_file(url: &str) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>>{
 	//sacamos los json
-	let url_base = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes";
+        let url_base = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes";
 	match exists("cities.json") {
 		Ok(false) => save_initial_file(url_base),
 		Ok(true) => (),
@@ -48,13 +52,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 	// //json
 	let mut url_precios = "https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/FiltroMunicipio/".to_string();
 	let query = args.city.to_lowercase().trim().to_string();
-	let mun = municipios.get(&query).expect("city not found, exiting");
-	url_precios.push_str(&mun.id.to_string().as_str());
+	let mun: &Municipio;
+	if let Some(m) = municipios.get(&query) {
+		url_precios.push_str(&m.id.to_string().as_str());
+		mun = m;
+	}
+	else {
+		println!("No city specified");
+		return Ok(());
+	}
+
 	//precios
-	let mut result = reqwest::blocking::get(url_precios)?.text()?;
+	let result = reqwest::blocking::get(url_precios)?.text()?;
 	//sacamos el objeto json
-	result = result.replace("Precio Gasolina 95 E5", "Precio95");
-	result = result.replace("Precio Gasoleo A", "PrecioGasoil");
 	let json_out = json::parse(&result).unwrap();
 	//precios
 	let gasolineras = get_precios(&json_out).unwrap();
@@ -73,9 +83,15 @@ fn print_prices(mun: &Municipio, gas_stations :&Vec<Gasolinera>, f_type: FuelTyp
 		let price: f32 = match f_type {
 			FuelType::Gas => gas.precio_gasolina,
 			FuelType::Diesel => gas.precio_gasoil,
+            FuelType::Gas98 => gas.precio_gasolina98,
+			FuelType::DieselPre => gas.precio_gasoilp,
 		};
+		//ignore stations which don't offer the selected fuel type
+		if price == 0.0 {
+			continue;
+		}
 		match money {
-			Some(m) => println!("{}, {} €/l; {} l", gas.nombre, price, m/price),
+			Some(m) => println!("{}, {} €/l; {:.1} l", gas.nombre, price, m/price),
 			None =>  println!("{}, {} €/l", gas.nombre, price),
 		}
 	}
@@ -87,9 +103,19 @@ fn sort_gas(gas_stations :&mut Vec<Gasolinera>, f_type: FuelType) {
 			.partial_cmp(&b.precio_gasolina)
 			.unwrap_or(Ordering::Equal)
 		}),
+		FuelType::Gas98 => 	gas_stations.sort_by(|a,b| {
+			a.precio_gasolina98
+			.partial_cmp(&b.precio_gasolina98)
+			.unwrap_or(Ordering::Equal)
+		}),
 		FuelType::Diesel => gas_stations.sort_by(|a,b| {
 			a.precio_gasoil
 			.partial_cmp(&b.precio_gasoil)
+			.unwrap_or(Ordering::Equal)
+		}),
+		FuelType::DieselPre => gas_stations.sort_by(|a,b| {
+			a.precio_gasoilp
+			.partial_cmp(&b.precio_gasoilp)
 			.unwrap_or(Ordering::Equal)
 		}),
 	}
@@ -97,6 +123,7 @@ fn sort_gas(gas_stations :&mut Vec<Gasolinera>, f_type: FuelType) {
 // resultados.push(get_gasolinera(&resultados));
 // println!("{:?}", get_gasolinera(&gasolinera));
 fn get_precios(raiz : &JsonValue) -> Option<JsonValue> {
+
 	let mut lista_precios=None;
 	for val in raiz.entries() {
 		if val.0 == "ListaEESSPrecio" {
@@ -114,15 +141,19 @@ fn get_gasolinera(json_val : &JsonValue) -> Gasolinera {
 		horario : "".to_string(),
 		nombre : "".to_string(),
 		precio_gasoil : 0.0,
+		precio_gasoilp : 0.0,
 		precio_gasolina : 0.0,
+		precio_gasolina98: 0.0,
 	};
 
 	for entry in json_val.entries() {
 		match entry.0 {
 			"Dirección" => gas.direccion = entry.1.as_str().unwrap().to_string(),
 			"Horario" => gas.horario = entry.1.as_str().unwrap().to_string(),
-			"PrecioGasoil" => gas.precio_gasoil = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
-			"Precio95" => gas.precio_gasolina = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
+			"Precio Gasoleo A" => gas.precio_gasoil = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
+			"Precio Gasoleo Premium" => gas.precio_gasoilp = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
+			"Precio Gasolina 95 E5" => gas.precio_gasolina = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
+			"Precio Gasolina 98 E5" => gas.precio_gasolina98 = entry.1.as_str().unwrap().replace(",",".").parse::<f32>().unwrap_or(0.0),
 			"Rótulo" => gas.nombre = entry.1.as_str().unwrap().to_string(),
 			_ => ()
 		}
@@ -151,7 +182,9 @@ fn get_municipio(json_val:&JsonValue) -> Municipio {
 struct Gasolinera {
 	nombre : String,
 	precio_gasolina : f32,
-	precio_gasoil: f32, 
+	precio_gasolina98: f32,
+	precio_gasoil: f32,
+    precio_gasoilp: f32,
 	direccion: String,
 	horario: String,
 }
