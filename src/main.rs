@@ -14,7 +14,9 @@ struct Cli{
 	#[arg(value_enum, short, long, alias="combustible")]
 	fuel_type: FuelType,
 	#[arg(short, long, alias="dinero")]
-	money: Option<f32>
+	money: Option<f32>,
+	#[arg(short, long, alias="litros")]
+	liters: Option<f32>
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -73,10 +75,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 		resultados.push(get_gasolinera(&gasolinera));
 	}
 	sort_gas(&mut resultados, args.fuel_type);
-	print_prices(mun, &resultados,args.fuel_type ,args.money );
+	print_prices(mun, &resultados,args.fuel_type ,args.money, args.liters);
 	Ok(())
 }
-fn print_prices(mun: &Municipio, gas_stations :&Vec<Gasolinera>, f_type: FuelType, money: Option<f32>) {
+fn print_prices(mun: &Municipio, gas_stations :&Vec<Gasolinera>, f_type: FuelType, money: Option<f32>, liters: Option<f32>) {
 	//print
 	println!("Precios de carburantes en {}",mun.municipio);
 	for gas in gas_stations {
@@ -91,9 +93,14 @@ fn print_prices(mun: &Municipio, gas_stations :&Vec<Gasolinera>, f_type: FuelTyp
 			continue;
 		}
 		match money {
-			Some(m) => println!("{}, {} €/l; {:.1} l", gas.nombre, price, m/price),
-			None =>  println!("{}, {} €/l", gas.nombre, price),
+			Some(m) => { println!("{}, {} €/l; {:.1} l", gas.nombre, price, m / price); continue },
+			None => (),
 		}
+		match liters {
+			Some(l) => { println!("{}, {} €/l; {}l => {:.1} €", gas.nombre, price, l, price * l); continue; },
+			None => (),
+		}
+		println!("{}, {} €/l", gas.nombre, price); //print if no option specified
 	}
 }
 fn sort_gas(gas_stations :&mut Vec<Gasolinera>, f_type: FuelType) {
